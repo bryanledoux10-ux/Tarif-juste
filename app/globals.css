@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --color-encre: #14213d;
+  --color-facture: #e85d2a;
+  --color-papier: #faf6ee;
+  --color-trait: #e4dccb;
+  --color-gris: #5b6170;
+  --font-titre: var(--font-fraunces), Georgia, serif;
+  --font-texte: var(--font-plex), system-ui, sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-papier);
+  color: var(--color-encre);
+  font-family: var(--font-texte);
+  font-feature-settings: "tnum" 1;
+}
+
+.chiffre {
+  font-family: var(--font-titre);
+  font-variant-numeric: tabular-nums;
+}
