@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { dateDeHausse } from "@/lib/argumentaire";
+import { CONTACT_EMAIL, GARANTIE_JOURS, PRIX_EUROS } from "@/lib/site";
 import {
   DEFAUTS,
   STATUTS,
@@ -17,7 +19,31 @@ const ETAPES = 3;
 export default function Tunnel() {
   const [etape, setEtape] = useState(0);
   const [r, setR] = useState<Reponses>(DEFAUTS);
+  const [annule, setAnnule] = useState(false);
   const maj = (champ: Partial<Reponses>) => setR((prec) => ({ ...prec, ...champ }));
+
+  // Après un paiement annulé, on retrouve les réponses et on revient au résultat.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("annule")) return;
+    try {
+      const enregistre = sessionStorage.getItem("tj-reponses");
+      if (enregistre) {
+        setR({ ...DEFAUTS, ...(JSON.parse(enregistre) as Partial<Reponses>) });
+        setEtape(ETAPES);
+        setAnnule(true);
+      }
+    } catch {
+      /* stockage indisponible : on repart du début */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("tj-reponses", JSON.stringify(r));
+    } catch {
+      /* stockage indisponible : sans conséquence */
+    }
+  }, [r]);
 
   const suivant = () => {
     setEtape((e) => e + 1);
@@ -28,7 +54,25 @@ export default function Tunnel() {
     window.scrollTo({ top: 0 });
   };
 
-  if (etape >= ETAPES) return <Resultat r={r} recommencer={() => setEtape(0)} />;
+  if (etape >= ETAPES)
+    return (
+      <>
+        {annule && (
+          <p role="status" className="mx-auto mt-4 max-w-xl px-4">
+            <span className="block rounded-lg border-l-4 border-facture bg-white px-4 py-3">
+              Paiement annulé : rien n'a été débité. Ton résultat est toujours là.
+            </span>
+          </p>
+        )}
+        <Resultat
+          r={r}
+          recommencer={() => {
+            setAnnule(false);
+            setEtape(0);
+          }}
+        />
+      </>
+    );
 
   const jours = joursFacturables(r.semainesConges, r.joursNonFactures);
   const reste = Math.round(100 * (1 - STATUTS[r.statut].taux));
@@ -344,9 +388,14 @@ function Resultat({ r, recommencer }: { r: Reponses; recommencer: () => void }) 
         <h2 className="font-titre text-2xl font-extrabold">Ton message pour annoncer la hausse</h2>
         <div className="mt-3 rounded-lg border border-trait bg-white p-5 leading-relaxed">
           <p>Bonjour,</p>
+          <p className="mt-3">Merci pour la confiance que vous m'accordez dans nos projets.</p>
           <p className="mt-3">
-            Je vous remercie pour la confiance que vous m'accordez. Pour continuer à vous offrir
-            le même niveau de qualité, mon tarif journalier évoluera à partir du mois prochain.
+            Je vous informe qu'à partir du {dateDeHausse()}, mon tarif journalier passera de{" "}
+            {euros(r.tarifActuel)} à{" "}
+            <span className="inline-block blur-sm select-none" aria-hidden>
+              888 €
+            </span>{" "}
+            HT.
           </p>
           <div className="relative mt-3" aria-hidden>
             <div className="space-y-2 blur-sm select-none">
@@ -362,15 +411,7 @@ function Resultat({ r, recommencer }: { r: Reponses; recommencer: () => void }) 
         </p>
       </section>
 
-      <div className="mt-8 rounded-lg bg-encre p-5 text-white">
-        <p className="font-titre text-2xl font-extrabold">Ton plan est prêt.</p>
-        <p className="mt-2 text-white/80">
-          Tarif conseillé, message de hausse complet et calcul détaillé, envoyés par email.
-        </p>
-        <p className="mt-4 flex h-14 items-center justify-center rounded-lg bg-white/15 text-center font-semibold">
-          Paiement disponible très bientôt
-        </p>
-      </div>
+      <Paywall r={r} perteAnnuelle={res.perteAnnuelle} />
 
       <div className="mt-6 flex flex-col items-center gap-3 text-center">
         <button type="button" onClick={recommencer} className="underline underline-offset-2">
@@ -386,5 +427,127 @@ function Resultat({ r, recommencer }: { r: Reponses; recommencer: () => void }) 
         conseillé ajoute 20 % de marge pour les imprévus, les impayés et les mois creux.
       </p>
     </main>
+  );
+}
+
+const FAQ = [
+  {
+    q: "Est-ce que ça marche pour mon cas ?",
+    r: "Oui si tu factures à la journée, à l'heure ou à la prestation, en micro-entreprise, en entreprise individuelle ou en société. Le calcul part de tes propres chiffres, pas de moyennes.",
+  },
+  {
+    q: "Combien de temps ça me prend ?",
+    r: "Ton plan s'affiche dès le paiement validé. Tu copies le message, tu remplaces ton prénom, tu l'envoies : dix minutes en tout.",
+  },
+  {
+    q: "Et si je veux arrêter ?",
+    r: `Il n'y a rien à résilier : c'est un paiement unique, pas un abonnement. Et si le plan ne te sert pas, tu as ${GARANTIE_JOURS} jours pour être remboursé.`,
+  },
+  {
+    q: "À quoi sert exactement ce que je paie ?",
+    r: "À savoir ton tarif conseillé exact, et à oser l'annoncer : un email complet et une version SMS, déjà rédigés avec tes chiffres, plus le détail du calcul à montrer à ton comptable.",
+  },
+];
+
+function Paywall({ r, perteAnnuelle }: { r: Reponses; perteAnnuelle: number }) {
+  const [chargement, setChargement] = useState(false);
+  const [erreur, setErreur] = useState("");
+  const partJournee = Math.max(1, Math.round((PRIX_EUROS / Math.max(1, r.tarifActuel)) * 100));
+
+  const payer = async () => {
+    setChargement(true);
+    setErreur("");
+    try {
+      const rep = await fetch("/api/paiement", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(r),
+      });
+      const json = (await rep.json()) as { url?: string; erreur?: string };
+      if (!rep.ok || !json.url) throw new Error(json.erreur);
+      window.location.href = json.url;
+    } catch (e) {
+      setErreur(
+        e instanceof Error && e.message
+          ? e.message
+          : "Le paiement n'a pas pu démarrer. Réessaie dans un instant."
+      );
+      setChargement(false);
+    }
+  };
+
+  return (
+    <section className="mt-8 rounded-lg bg-encre p-5 text-white" aria-label="Débloquer ton plan">
+      <p className="font-titre text-2xl font-extrabold">Voilà ton plan, prêt.</p>
+      <p className="mt-2 text-white/80">
+        Ton tarif conseillé, ton message de hausse complet et le calcul détaillé. Il ne te reste
+        qu'à le débloquer pour le garder.
+      </p>
+
+      {perteAnnuelle > 0 && (
+        <div className="mt-5 grid grid-cols-2 gap-3 text-center">
+          <div className="rounded-lg bg-white/10 p-3">
+            <p className="text-sm text-white/70">Ce que tu perds</p>
+            <p className="chiffre text-2xl font-extrabold text-facture">{euros(perteAnnuelle)}</p>
+            <p className="text-sm text-white/70">chaque année</p>
+          </div>
+          <div className="rounded-lg bg-white/10 p-3">
+            <p className="text-sm text-white/70">Ton plan</p>
+            <p className="chiffre text-2xl font-extrabold">{euros(PRIX_EUROS)}</p>
+            <p className="text-sm text-white/70">une seule fois</p>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-5 rounded-lg border-2 border-facture bg-white p-4 text-encre">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="font-semibold">Plan complet</p>
+          <p className="chiffre text-3xl font-extrabold">{euros(PRIX_EUROS)}</p>
+        </div>
+        <p className="mt-1 text-sm text-gris">
+          Soit {partJournee} % d'une seule de tes journées à {euros(r.tarifActuel)}.
+        </p>
+        <ul className="mt-3 space-y-1 text-sm">
+          <li>✓ Ton tarif conseillé exact</li>
+          <li>✓ L'email d'annonce et la version SMS, prêts à envoyer</li>
+          <li>✓ Le calcul détaillé, à garder</li>
+        </ul>
+      </div>
+
+      <p className="mt-4 rounded-lg bg-white/10 px-4 py-3 text-sm leading-relaxed">
+        <strong>Satisfait ou remboursé pendant {GARANTIE_JOURS} jours.</strong> Écris à{" "}
+        {CONTACT_EMAIL} avec l'adresse utilisée pour payer : tu es remboursé sous 48 h, sans
+        justification. L'argent réapparaît sur ton compte sous 5 à 10 jours ouvrés selon ta banque.
+      </p>
+
+      <button
+        type="button"
+        onClick={payer}
+        disabled={chargement}
+        className="mt-5 flex h-14 w-full items-center justify-center rounded-lg bg-facture text-lg font-semibold text-white disabled:opacity-60"
+      >
+        {chargement ? "Ouverture du paiement…" : `Débloquer mon plan — ${euros(PRIX_EUROS)}`}
+      </button>
+      <p className="mt-2 text-center text-sm text-white/80">
+        Paiement unique, sans abonnement · Carte bancaire sécurisée par Stripe
+      </p>
+      {erreur && (
+        <p role="alert" className="mt-3 rounded-lg bg-white px-4 py-3 text-sm font-semibold text-facture">
+          {erreur}
+        </p>
+      )}
+
+      <div className="mt-6 divide-y divide-white/15 border-t border-white/15">
+        {FAQ.map((f) => (
+          <details key={f.q} className="group py-3">
+            <summary className="flex cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden justify-between gap-3 font-semibold">
+              {f.q}
+              <span className="text-facture transition group-open:rotate-45">+</span>
+            </summary>
+            <p className="mt-2 text-white/80">{f.r}</p>
+          </details>
+        ))}
+      </div>
+    </section>
   );
 }
