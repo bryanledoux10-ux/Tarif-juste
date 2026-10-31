@@ -531,6 +531,14 @@ function Paywall({ r, perteAnnuelle }: { r: Reponses; perteAnnuelle: number }) {
       <p className="mt-2 text-center text-sm text-white/80">
         Paiement unique, sans abonnement · Carte bancaire sécurisée par Stripe
       </p>
+      <p className="mt-2 text-center text-xs leading-relaxed text-white/60">
+        En payant, tu acceptes les{" "}
+        <Link href="/cgv" className="underline underline-offset-2">
+          CGV
+        </Link>{" "}
+        et demandes l'accès immédiat à ton plan, ce qui met fin au droit de rétractation. La
+        garantie {GARANTIE_JOURS} jours satisfait ou remboursé s'applique toujours.
+      </p>
       {erreur && (
         <p role="alert" className="mt-3 rounded-lg bg-white px-4 py-3 text-sm font-semibold text-facture">
           {erreur}

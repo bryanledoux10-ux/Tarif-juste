@@ -56,7 +56,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/mentions-legales" className="underline underline-offset-2">
               Mentions légales
             </Link>
-            <span className="text-gris/70">CGV et confidentialité : bientôt</span>
+            <Link href="/cgv" className="underline underline-offset-2">
+              CGV
+            </Link>
+            <Link href="/confidentialite" className="underline underline-offset-2">
+              Confidentialité
+            </Link>
           </div>
         </footer>
       </body>
