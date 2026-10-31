@@ -1,25 +1,50 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+const TOLERANCE_SECONDES = 300;
+
 // Stripe appelle cette adresse à chaque paiement. On vérifie la signature :
 // seul Stripe, qui connaît le secret, peut produire un appel valide.
 export async function POST(req: Request) {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!secret) return new Response("Webhook non configuré", { status: 500 });
+  // trim() : un espace ou un retour à la ligne collé avec le secret suffit à tout casser.
+  const secret = (process.env.STRIPE_WEBHOOK_SECRET ?? "").trim();
+  if (!secret) return new Response("Webhook non configuré : STRIPE_WEBHOOK_SECRET absente", { status: 500 });
 
   const corps = await req.text();
   const entete = req.headers.get("stripe-signature") ?? "";
-  const morceaux = Object.fromEntries(
-    entete.split(",").map((p) => p.split("=") as [string, string])
-  );
-  const horodatage = Number(morceaux.t);
-  const signature = morceaux.v1 ?? "";
 
-  const attendue = createHmac("sha256", secret).update(`${morceaux.t}.${corps}`).digest("hex");
-  const valide =
-    signature.length === attendue.length &&
-    timingSafeEqual(Buffer.from(signature), Buffer.from(attendue)) &&
-    Math.abs(Date.now() / 1000 - horodatage) < 300;
-  if (!valide) return new Response("Signature invalide", { status: 400 });
+  let horodatage = "";
+  const signatures: string[] = [];
+  for (const morceau of entete.split(",")) {
+    const i = morceau.indexOf("=");
+    if (i < 0) continue;
+    const cle = morceau.slice(0, i).trim();
+    const valeur = morceau.slice(i + 1).trim();
+    if (cle === "t") horodatage = valeur;
+    if (cle === "v1") signatures.push(valeur);
+  }
+
+  const attendue = Buffer.from(
+    createHmac("sha256", secret).update(`${horodatage}.${corps}`, "utf8").digest("hex")
+  );
+  const signatureOk = signatures.some((s) => {
+    const b = Buffer.from(s);
+    return b.length === attendue.length && timingSafeEqual(b, attendue);
+  });
+  const ecart = Math.round(Math.abs(Date.now() / 1000 - Number(horodatage)));
+
+  if (!signatureOk || !(ecart < TOLERANCE_SECONDES)) {
+    // Diagnostic visible dans Stripe (onglet de l'événement), sans révéler le secret.
+    const diagnostic = [
+      `signature ${signatureOk ? "ok" : "refusée"}`,
+      `en-tête ${entete ? "présent" : "absent"}`,
+      `signatures v1 reçues : ${signatures.length}`,
+      `secret commence par whsec_ : ${secret.startsWith("whsec_") ? "oui" : "non"}`,
+      `longueur du secret : ${secret.length}`,
+      `écart d'horloge : ${ecart} s`,
+    ].join(" | ");
+    console.error("Webhook refusé :", diagnostic);
+    return new Response(`Signature invalide — ${diagnostic}`, { status: 400 });
+  }
 
   const evenement = JSON.parse(corps) as {
     type: string;
@@ -31,7 +56,6 @@ export async function POST(req: Request) {
     console.log(
       `Paiement confirmé : ${s.id} (${s.payment_status}) — ${s.customer_details?.email ?? "sans email"}`
     );
-    // Étape suivante : envoi automatique du plan par email.
   }
 
   return new Response("ok");
